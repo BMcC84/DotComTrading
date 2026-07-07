@@ -16,7 +16,11 @@ It was built as my final-year dissertation for the BEng Software Engineering Deg
 
 
 
-![Dot-Com Trading Demo](docs/demo.mp4)
+
+
+https://github.com/user-attachments/assets/97cfa935-e7c4-423a-a586-b88fa024893f
+
+
 
 
 
