@@ -16,7 +16,7 @@ It was built as my final-year dissertation for the BEng Software Engineering Deg
 
 
 
-!\[Dot-Com Trading Demo](docs/demo.gif)
+![Dot-Com Trading Demo](docs/demo.mp4)
 
 
 
@@ -93,7 +93,7 @@ This Application follows a layered architecture separating Presentation, Busines
 
 
 
-!\[Home](docs/screenshots/home.png)
+![Home](docs/screenshots/home.png)
 
 
 
@@ -103,7 +103,7 @@ This Application follows a layered architecture separating Presentation, Busines
 
 
 
-!\[Market](docs/screenshots/login.png)
+![Market](docs/screenshots/login.png)
 
 
 
@@ -113,7 +113,7 @@ This Application follows a layered architecture separating Presentation, Busines
 
 
 
-!\[Market](docs/screenshots/market.png)
+![Market](docs/screenshots/market.png)
 
 
 
@@ -123,7 +123,7 @@ This Application follows a layered architecture separating Presentation, Busines
 
 
 
-!\[Website](docs/screenshots/website.png)
+![Website](docs/screenshots/website.png)
 
 
 
@@ -133,18 +133,7 @@ This Application follows a layered architecture separating Presentation, Busines
 
 
 
-!\[Website](docs/screenshots/websiteinfo.png)
-
-
-
-
-
-##### Portfolio
-
-
-
-!\[Portfolio](docs/screenshots/portfolio.png)
-
+![Website](docs/screenshots/websiteinfo.png)
 
 
 
