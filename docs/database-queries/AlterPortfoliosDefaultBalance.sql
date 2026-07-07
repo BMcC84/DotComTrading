@@ -1,0 +1,3 @@
+﻿ALTER TABLE Portfolios
+ADD CONSTRAINT DF_Portfolios_Balance
+DEFAULT (10000.00) FOR Balance;

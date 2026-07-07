@@ -1,0 +1,14 @@
+﻿CREATE TABLE Websites (
+Id INT IDENTITY(1,1) PRIMARY KEY,
+Name NVARCHAR(40) NOT NULL,
+Domain NVARCHAR(80) NOT NULL,
+Url NVARCHAR(120) NULL,
+BacklinkCount BIGINT NOT NULL,
+FriendlyBacklinkCount INT NOT NULL,
+DomainAge INT NOT NULL,
+LifetimeVisits BIGINT NOT NULL,
+DailyVisits BIGINT NOT NULL,
+Price DECIMAL(11,2) NOT NULL
+);
+
+CREATE UNIQUE INDEX IX_Websites_Domain ON Websites (Domain);

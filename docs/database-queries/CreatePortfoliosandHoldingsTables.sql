@@ -1,0 +1,19 @@
+﻿CREATE TABLE Portfolios(
+Id INT IDENTITY(1,1) PRIMARY KEY,
+Balance DECIMAL(20, 2) NOT NULL
+);
+
+CREATE TABLE Holdings(
+Id INT IDENTITY(1,1) PRIMARY KEY,
+PortfolioId INT NOT NULL,
+WebsiteId INT NOT NULL,
+NoShare INT NOT NULL,
+
+CONSTRAINT FK_Holdings_Portfolios
+FOREIGN KEY (PortfolioId) REFERENCES Portfolios(Id) ON DELETE CASCADE,
+
+CONSTRAINT FK_Holdings_Websites
+FOREIGN KEY (WebsiteId) REFERENCES Websites(Id) ON DELETE CASCADE
+);
+
+CREATE UNIQUE INDEX IX_Holdings_PortfolioId_WebsiteId ON Holdings(PortfolioId, WebsiteId);

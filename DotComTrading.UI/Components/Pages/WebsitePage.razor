@@ -1,0 +1,479 @@
+﻿@page "/website/{WebsiteId:int}"
+
+@using DotComTrading.Models
+@using Radzen
+@using Radzen.Blazor
+
+@inject DotComTrading.UI.Services.APIClient API
+@inject DialogService DialogService
+@inject DotComTrading.Services.UserSessionService UserSessionService
+
+@implements IDisposable
+
+@*Website Detail Page Containing Valuation Metrics and Price Graphs*@
+
+@if(website == null)
+{
+	<p>Loading Page...</p>
+}
+else
+{
+	<div style="margin-left:15px; margin-top:10px;">
+		<button class="btn btn-primary" @onclick="ToggleChartType">@GetChartButton()</button>
+	</div>
+	<div style="max-width:1400px; margin:0 auto; padding 10px;">
+		<div style="display:flex; gap:20px; padding:10px; align-items:flex-start">
+			<div style="flex:2; background:white; border-radius:10px; padding:10px; margin-bottom:10px">
+				@if (priceHistory.Count > 2)
+				{
+					@if (!showCandlestickChart)
+					{
+						<RadzenChart Style="height:500px; width:100%; padding:10px;">
+						<RadzenLineSeries Data="@graphData" CategoryProperty="Index" ValueProperty="PriceValue" Title="Price" StrokeWidth="4" Stroke="@ChangeLineColour()">
+						</RadzenLineSeries>
+						<RadzenCategoryAxis Visible="false" />
+						<RadzenValueAxis />
+						<RadzenLegend Visible="false" />
+						</RadzenChart>
+					}
+					else
+					{
+						<div class="candlestick-chart">
+							@foreach(var candle in candles)
+							{
+								<div class="candle">
+									<div class="wick" style="top:@($"{candle.WickTop}px"); height:@($"{candle.WickHeight}px");" />
+									<div class="@GetBodyClass(candle)" style="top:@($"{candle.BodyTop}px"); height:@($"{candle.BodyHeight}px");" />
+								</div>
+
+							}
+						</div>
+					}
+				}
+				else
+				{
+					<p>More Data is Required for Graph.</p>
+				}
+
+				<div style="display:flex; gap:5px; margin-bottom:12px;">
+					<button class="@ChangeWindowButtonClass(14)" @onclick='() => ChangeWindow(14)'>Last 3 Minutes</button>
+					<button class="@ChangeWindowButtonClass(40)" @onclick='() => ChangeWindow(40)'>Last 10 Minutes</button>
+					<button class="@ChangeWindowButtonClass(80)" @onclick='() => ChangeWindow(80)'>Last 20 Minutes</button>
+				</div>
+			</div>
+
+			<div style="flex:1; background:white; border-radius:10px; padding:10px">
+				<div class="info-card">
+					<div class="title-row">
+						<img src="@GetFavicon(website.Domain)" class="favicon" />
+						<h2 class="title">@UpperCase(website.Name)</h2>
+					</div>
+					
+					<a href="@website.Url" target="_blank" class="url">@website.Url</a>
+					<h3>£@website.Price.ToString("0.00")</h3>
+
+					<div class="price-change" style="color:@ChangeLineColour()">@PriceChangeSign(GetPriceChange())</div>
+
+					<button class="btn btn-success" @onclick="OpenPurchaseDialog">Purchase</button>
+				</div>
+
+				<div class="valuation-card">
+					<h4>Valuation Metrics</h4>
+
+					<div class="metric-row">
+						<span>Backlinks- </span>
+						<strong>@website.BacklinkCount</strong>
+					</div>
+					<div class="metric-row">
+						<span>Backlinks From Other Stocks on Market-  </span>
+						<strong>@website.FriendlyBacklinkCount</strong>
+					</div>
+					<div class="metric-row">
+						<span>Daily Visits- </span>
+						<strong>@website.DailyVisits</strong>
+					</div>
+					<div class="metric-row">
+						<span>Lifetime Visits- </span>
+						<strong>@website.LifetimeVisits</strong>
+					</div>
+					<div class="metric-row">
+						<span>Website Age- </span>
+						<strong>@website.DomainAge</strong>
+					</div>
+				</div>
+			</div>
+		</div>
+	</div>
+}
+
+@code {
+	[Parameter]
+	public int WebsiteId { get; set; }
+
+	private Website? website;
+
+	private List<WebsitePriceRecord> priceHistory = new();
+	private int historyCount = 40;
+
+	private List<GraphPoints> graphData = new();
+
+	private PeriodicTimer? refreshTimer;
+	private CancellationTokenSource? cancellationTokenSource;
+
+	private bool showCandlestickChart = false;
+	private List<CandlePoints> candles = new();
+
+	//Initialises automatic refresh
+	protected override async Task OnInitializedAsync()
+	{
+		cancellationTokenSource = new CancellationTokenSource();
+		StartAutoRefresh();
+	}
+
+	protected override async Task OnParametersSetAsync()
+	{
+		website = await API.GetWebsiteByIdAsync(WebsiteId);
+		await LoadPriceHistory();
+	}
+
+	private async Task OpenPurchaseDialog()
+	{
+
+		var result = await DialogService.OpenAsync<PurchaseDialogue>("Purchase Shares", new Dictionary<string, object>
+		{
+			{ "WebsitePrice", website!.Price }
+		});
+
+		if(result is decimal shares)
+		{
+			await Purchase(shares);
+			await LoadPriceHistory();
+			StateHasChanged();
+		}
+	}
+
+	private async Task Purchase(decimal shares)
+	{
+		if(shares <= 0)
+		{
+			return;
+		}
+
+		var request = new TradeRequest
+		{
+			WebsiteId = WebsiteId,
+			NoShares = shares
+		};
+
+		await API.PurchaseAsync(UserSessionService.PortfolioId, request);
+		UserSessionService.NotifyBalanceChanged();
+		website = await API.GetWebsiteByIdAsync(WebsiteId);
+	}
+
+	private string UpperCase(string word)
+	{
+		return char.ToUpper(word[0]) + word.Substring(1).ToLower();
+	}
+
+	private async Task LoadPriceHistory()
+	{
+		priceHistory = await API.GetPriceHistoryAsync(WebsiteId, historyCount);
+
+		graphData = priceHistory.Select((record, index) => new GraphPoints
+			{
+				Index = (index + 1),
+				TimeValue = record.TimeOfRecording.ToString("HH.mm"),
+				PriceValue = record.Price
+			}).ToList();
+
+		BuildCandleChartFromPriceHistory();
+	}
+
+	private async Task ChangeWindow(int count)
+	{
+		historyCount = count;
+		await LoadPriceHistory();
+		StateHasChanged();
+	}
+
+	private string ChangeWindowButtonClass(int count)
+	{
+		if(historyCount == count)
+		{
+			return "btn btn-primary";
+		}
+
+		return "btn btn-outline-primary";
+	}
+
+	private string ChangeLineColour()
+	{
+		var first = graphData.First().PriceValue;
+		var last = graphData.Last().PriceValue;
+
+		if(last > first)
+		{
+			return "green";
+		}
+		return "red";
+	}
+
+	private decimal GetPriceChange()
+	{
+		if (graphData != null && graphData.Count < 2)
+		{
+			return 0;
+		}
+
+		decimal first = graphData.First().PriceValue;
+		decimal last = graphData.Last().PriceValue;
+
+		return (((last - first) / first) * 100);
+	}
+
+	private string PriceChangeSign(decimal price)
+	{
+		decimal roundedPrice = Math.Round(price, 2);
+		if(roundedPrice > 0)
+		{
+			return $"+{roundedPrice:0.00}%";
+		}
+		return $"{roundedPrice:0.00}%"; ;
+	}
+
+	private void StartAutoRefresh()
+	{
+		refreshTimer = new PeriodicTimer(TimeSpan.FromSeconds(5));
+
+		_ = Task.Run(async () =>
+		{
+			try
+			{
+				while (refreshTimer != null && await refreshTimer.WaitForNextTickAsync(cancellationTokenSource!.Token))
+				{
+					await InvokeAsync(async () =>
+					{
+						try
+						{
+							website = await API.GetWebsiteByIdAsync(WebsiteId);
+							await LoadPriceHistory();
+							StateHasChanged();
+						}
+						catch
+						{
+						}
+					});
+				}
+			}
+			catch (OperationCanceledException)
+			{
+			}
+		});
+	}
+
+	//Scales candlestick data to fit chart
+	private void ScaleCandles()
+	{
+		if(candles.Count == 0)
+		{
+			return;
+		}
+
+		int chartHeight = 400;
+
+		var min = candles.Min(c => c.Low);
+		var max = candles.Max(c => c.High);
+		var range = max - min;
+
+		if(range == 0)
+		{
+			range = 1;
+		}
+
+		int Scale(decimal price)
+		{
+			return chartHeight - (int)(((price - min) / range) * chartHeight);
+		}
+
+		foreach(var candle in candles)
+		{
+			var highPos = Scale(candle.High);
+			var lowPos = Scale(candle.Low);
+			var openPos = Scale(candle.Open);
+			var closePos = Scale(candle.Close);
+
+			candle.WickTop = highPos;
+			candle.WickHeight = Math.Max((lowPos - highPos), 1);
+			candle.BodyTop = Math.Min(openPos, closePos);
+			candle.BodyHeight = Math.Max(Math.Abs(openPos - closePos), 4);
+		}
+	}
+
+	//Builds candlestick chart from price history
+	private void BuildCandleChartFromPriceHistory()
+	{
+		candles = new List<CandlePoints>();
+
+		if (priceHistory == null || priceHistory.Count < 2)
+		{
+			return;
+		}
+
+		int targetCandleCount = 24;
+		int chunkSize = Math.Max((priceHistory.Count / targetCandleCount), 2);
+
+		candles = priceHistory.Chunk(chunkSize).Where(chunk => chunk.Length >= 2).Select(chunk => new CandlePoints
+		{
+			Open = chunk.First().Price,
+			Close = chunk.Last().Price,
+			High = chunk.Max(x => x.Price),
+			Low = chunk.Min(x => x.Price)
+		}).ToList();
+
+		ScaleCandles();
+	}
+
+	private string GetBodyClass(CandlePoints candle)
+	{
+		if (candle.IsUp)
+		{
+			return "body up";
+		}
+		else
+		{
+			return "body down";
+		}
+	}
+
+	private void ToggleChartType()
+	{
+		showCandlestickChart = !showCandlestickChart;
+	}
+
+	private string GetChartButton()
+	{
+		if (showCandlestickChart)
+		{
+			return "Line Chart";
+		}
+		return "Candlestick Chart";
+	}
+
+	private string GetFavicon(string domain)
+	{
+		return $"https://www.google.com/s2/favicons?domain={domain}&sz=64";
+	}
+
+	public void Dispose()
+	{
+		cancellationTokenSource?.Cancel();
+		refreshTimer?.Dispose();
+		cancellationTokenSource?.Dispose();
+	}
+}
+
+<style>
+
+	.valuation-card{
+		margin-top: 20px;
+		margin-bottom: 20px;
+		padding: 10px;
+		border-radius: 10px;
+		background: white;
+		border: 1px solid;
+	}
+
+	.valuation-card h4{
+		margin-bottom: 10px;
+		font-weight: 600;
+	}
+
+	.metric-row{
+		display: flex;
+		justify-content: space-between;
+		padding: 8px;
+		border-bottom: 1px solid;
+	}
+
+	.info-card{
+		margin-top: 20px;
+		margin-bottom: 20px;
+		padding: 10px;
+		border-radius: 10px;
+		background: white;
+		border: 1px solid;
+	}
+
+	.title-row{
+		display: flex;
+		align-items: center;
+		gap: 10px;
+	}
+
+	.favicon{
+		width: 25px;
+		height: 25px;
+	}
+
+	.title{
+		font-weight: 700;
+	}
+
+	.url{
+		font-size: 16px;
+		color: cornflowerblue;
+	}
+
+	.url-hover{
+		text-decoration: underline;
+	}
+
+	.price{
+		font-size: 28px;
+		font-weight: 600;
+		margin-top: 10px;
+	}
+
+	.price-change{
+		font-size: 16px;
+		font-weight: 500;
+	}
+
+	.candlestick-chart{
+		position: relative;
+		height: 400px;
+		display: flex;
+		align-items: flex-end;
+		gap: 6px;
+		padding: 10px;
+		margin-bottom: 25px;
+	}
+
+	.candle {
+		position: relative;
+		width: 10px;
+		height: 100%;
+	}
+
+	.wick {
+		position: absolute;
+		left: 4px;
+		width: 2px;
+		background: black;
+	}
+
+	.body {
+		position: absolute;
+		width: 10px;
+		border-radius: 2px;
+	}
+
+	.body.up {
+		background: green;
+	}
+
+	.body.down {
+		background: red;
+	}
+
+</style>

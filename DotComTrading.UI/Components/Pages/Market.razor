@@ -1,0 +1,265 @@
+﻿@page "/market"
+
+@using DotComTrading.Models
+
+@implements IDisposable
+
+@inject DotComTrading.UI.Services.APIClient API
+@inject NavigationManager Nav
+@inject DotComTrading.Services.UserSessionService UserSessionService
+
+@*Market Page Displaying Full List of Websites With Sorting Functionality and Live Price Updates*@
+
+@if (isLoaded != true)
+{
+    <p>Loading Websites...</p>
+}
+else if (errorMessage != "")
+{
+    <p style="color:red">@errorMessage</p>
+}
+else if (websites.Count == 0)
+{
+    <p>No Websites in Database</p>
+}
+else
+{
+    <table class="table">
+        <thead>
+            <tr>
+                <th @onclick='() => SortBy("name")' style="cursor:pointer"> Name</th>
+                <th>Domain</th>
+                <th @onclick='() => SortBy("price")' style="cursor:pointer"> Price</th>
+                <th @onclick='() => SortBy("movement")' style="cursor:pointer"> Movement</th>
+            </tr>
+        </thead>
+        <tbody>
+            @foreach (var w in websites)
+            {
+                <tr @onclick="() => GoToWebsite(w.Id)" style="cursor:pointer">
+                    <td>
+                        <div style="display:flex; align-items:center; gap:10px">
+                            <img src="@GetFavicon(w.Domain)" alt="@w.Name favicon" width="30" height="30" style="border-radius:5px" />
+                            <span>@UpperCase(w.Name)</span>
+                        </div>
+                    </td>
+                    <td>@w.Domain</td>
+                    <td>£@w.Price.ToString("0.00")</td>
+                    <td>
+                        <span style="color:@ChangeColour(w);">
+                            @ChangeArrow(w)
+                            @GetPriceChange(w).ToString("0.00")%
+                        </span>
+                    </td>
+                </tr>
+            }
+        </tbody>
+    </table>
+}
+
+@code {
+    private List<Website> websites = new();
+    private string errorMessage = "";
+    private bool isLoaded = false;
+
+    private PeriodicTimer? refreshTimer;
+    private CancellationTokenSource? cancellationTokenSource;
+
+    private string sortState = "name";
+    private bool ascendingSort = true;
+
+    private Dictionary<int, WebsitePriceChange> priceChanges = new();
+
+    //Starts automatic market refresh
+    protected override async Task OnInitializedAsync()
+    {
+        cancellationTokenSource = new CancellationTokenSource();
+
+        await LoadWebsitesAsync();
+        StartAutoRefresh();
+    }
+
+    private async Task LoadWebsitesAsync()
+    {
+        errorMessage = "";
+
+        try
+        {
+            websites = await API.GetWebsitesAsync();
+            var changes = await API.GetPriceChangesAsync();
+            priceChanges = changes.ToDictionary(c => c.WebsiteId);
+            Sort();
+        }
+        catch(Exception ex)
+        {
+            errorMessage = ex.Message;
+        }
+        finally
+        {
+            isLoaded = true;
+        }
+    }
+
+    //Regularly refreshes market data
+    private void StartAutoRefresh()
+    {
+        refreshTimer = new PeriodicTimer(TimeSpan.FromSeconds(5));
+
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                while (refreshTimer != null && await refreshTimer.WaitForNextTickAsync(cancellationTokenSource!.Token))
+                {
+                    await InvokeAsync(async () =>
+                    {
+                        try
+                        {
+                            websites = await API.GetWebsitesAsync();
+                            var changes = await API.GetPriceChangesAsync();
+                            priceChanges = changes.ToDictionary(c => c.WebsiteId);
+                            Sort();
+                            errorMessage = "";
+                            StateHasChanged();
+                        }
+                        catch (Exception ex)
+                        {
+                            errorMessage = ex.Message;
+                            StateHasChanged();
+                        }
+                    });
+                }
+            }
+            catch (OperationCanceledException)
+            {
+            }
+        });
+    }
+
+    private string GetFavicon(string domain)
+    {
+        return $"https://www.google.com/s2/favicons?domain={domain}&sz=64";
+    }
+
+    private string UpperCase(string word)
+    {
+        return char.ToUpper(word[0]) + word.Substring(1).ToLower();
+    }
+
+    private void Sort()
+    {
+        if(sortState == "name")
+        {
+            if (ascendingSort)
+            {
+                websites = websites.OrderBy(w => w.Name).ToList();
+            }
+            else
+            {
+                websites = websites.OrderByDescending(w => w.Name).ToList();
+            }
+        }
+        else if (sortState == "price")
+        {
+            if (ascendingSort)
+            {
+                websites = websites.OrderBy(w => w.Price).ToList();
+            }
+            else
+            {
+                websites = websites.OrderByDescending(w => w.Price).ToList();
+            }
+        }
+        else if(sortState == "movement")
+        {
+            if (ascendingSort)
+            {
+                websites = websites.OrderBy(w => GetPriceChange(w)).ToList();
+            }
+            else
+            {
+                websites = websites.OrderByDescending(w => GetPriceChange(w)).ToList();
+            }
+        }
+    }
+
+    private void SortBy(string field)
+    {
+        if(sortState == field)
+        {
+            ascendingSort = !ascendingSort;
+        }
+        else
+        {
+            sortState = field;
+            if(field == "movement")
+            {
+                ascendingSort = false;
+            }
+            else
+            {
+                ascendingSort = true;
+            }
+        }
+        Sort();
+        StateHasChanged();
+    }
+
+    private decimal GetPriceChange(Website website)
+    {
+        if (priceChanges.ContainsKey(website.Id))
+        {
+            var change = priceChanges[website.Id];
+            return (((change.CurrentPrice - change.PastPrice) / change.PastPrice) * 100);
+        }
+        return 0;
+    }
+
+    private string ChangeColour(Website website)
+    {
+        var change = GetPriceChange(website);
+
+        if(change > 0)
+        {
+            return "green";
+        }
+        else
+        {
+            return "red";
+        }
+    }
+
+    private string ChangeArrow(Website website)
+    {
+        var change = GetPriceChange(website);
+
+        if(change > 0)
+        {
+            return "↑";
+        }
+        else
+        {
+            return "↓";
+        }
+    }
+
+    //Navigates to selected website's page
+    private void GoToWebsite(int websiteId)
+    {
+        var url = $"/website/{websiteId}";
+
+        if(UserSessionService.PortfolioId > 0)
+        {
+            url = (url + $"?portfolioId={UserSessionService.PortfolioId}");
+        }
+
+        Nav.NavigateTo(url);
+    }
+
+    public void Dispose()
+    {
+        cancellationTokenSource?.Cancel();
+        refreshTimer?.Dispose();
+        cancellationTokenSource?.Dispose();
+    }
+}

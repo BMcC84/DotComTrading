@@ -1,0 +1,311 @@
+﻿@page "/portfolio"
+
+@using DotComTrading.Models
+@using Microsoft.AspNetCore.WebUtilities
+@using Radzen
+
+@implements IDisposable
+
+@inject DotComTrading.UI.Services.APIClient API
+@inject NavigationManager Nav
+@inject DotComTrading.Services.UserSessionService UserSessionService
+@inject DialogService DialogService
+
+@*Portfolio Page Displaying User Holdings, Live Prices and Trade History*@
+
+@if(!isLoaded)
+{
+	<p>Loading Portfolio...</p>
+}
+else if(errorMessage != "")
+{
+	<p style="color:red">@errorMessage</p>
+}
+else
+{
+	<h3>Holdings</h3>
+	@if (portfolio == null || portfolio.Holdings == null || portfolio.Holdings.Count == 0)
+	{
+		<p>You Do Not Own Any Websites Yet.</p>
+	}
+	else
+	{
+		<table class="table holdings-table">
+			<thead>
+				<tr>
+					<th>Name</th>
+					<th>Domain</th>
+					<th>Shares</th>
+					<th>Price</th>
+					<th>Movement</th>
+					<th>Actions</th>
+				</tr>
+			</thead>
+			<tbody>
+				@foreach (var holding in portfolio.Holdings)
+				{
+					var website = holding.Website;
+
+					if (website != null)
+					{
+						<tr>
+							<td @onclick="() => GoToWebsite(website.Id)" style="cursor:pointer">
+								<div style="display:flex; align-items:center; gap:10px">
+									<img src="@GetFavicon(website.Domain)" alt="@website.Name favicon" width="30" height="30" style="border-radius:5px" />
+									<span>@UpperCase(website.Name)</span>
+								</div>
+							</td>
+							<td>@website.Domain</td>
+							<td>@holding.NoShares</td>
+							<td>£@website.Price.ToString("0.00")</td>
+							<td>
+								<span style="color:@ChangeColour(website);">
+								@PriceChangeSign(GetPriceChange(website))
+								</span>
+							</td>
+							<td>
+								<button class="btn btn-primary" @onclick="() => GoToWebsite(website.Id)">Go To Page</button>
+								<button class="btn btn-danger" @onclick:stopPropagation="true" @onclick="() => OpenSellDialog(website, holding.NoShares)">Sell Shares</button>
+							</td>
+						</tr>
+					}
+				}
+			</tbody>
+		</table>
+	}
+
+	<h3>Trade History</h3>
+	@if (trades.Count == 0)
+	{
+		<p>No Trade History</p>
+	}
+	else
+	{
+		<table class="table trades-table">
+			<thead>
+				<tr>
+					<th>Transaction Type</th>
+					<th>Website</th>
+					<th>Domain</th>
+					<th>Shares Purchased</th>
+					<th>Price Per Share</th>
+					<th>Total Value</th>
+					<th>Time of Transaction</th>
+				</tr>
+			</thead>
+			<tbody>
+				@foreach (var trade in trades)
+				{
+					<tr>
+						<td style="color:@GetTradeColour(trade.TradeType); font-weight:600;">
+							@trade.TradeType
+						</td>
+
+						<td>@UpperCase(trade.WebsiteName)</td>
+						<td>@trade.Domain</td>
+						<td>@trade.NoShares</td>
+						<td>£@trade.PricePerShare.ToString("0.00")</td>
+						<td>£@trade.TotalValue.ToString("0.00")</td>
+						<td>@trade.TradeTime.ToString("dd/MM/yyyy HH:mm")</td>
+					</tr>
+				}
+			</tbody>
+		</table>
+	}
+}
+
+@code {
+	bool isLoaded = false;
+	private PortfolioResponse? portfolio;
+	private string errorMessage = "";
+
+	private Dictionary<int, WebsitePriceChange> priceChanges = new();
+
+	private List<TradeHistoryResponse> trades = new();
+
+	private PeriodicTimer? refreshTimer;
+	private CancellationTokenSource? cancellationTokenSource;
+
+	//Starts automatic refresh
+	protected override async Task OnInitializedAsync()
+	{
+		cancellationTokenSource = new CancellationTokenSource();
+
+		await LoadPortfolio();
+		StartAutoRefresh();
+	}
+
+	//Regularly refreshes price data
+	private void StartAutoRefresh()
+	{
+		refreshTimer = new PeriodicTimer(TimeSpan.FromSeconds(5));
+
+		_ = Task.Run(async () =>
+		{
+			try
+			{
+				while (refreshTimer != null && await refreshTimer.WaitForNextTickAsync(cancellationTokenSource!.Token))
+				{
+					await InvokeAsync(async () =>
+					{
+						try
+						{
+							await LoadPortfolio();
+							StateHasChanged();
+						}
+						catch (Exception ex)
+						{
+							errorMessage = ex.Message;
+							StateHasChanged();
+						}
+					});
+				}
+			}
+			catch (OperationCanceledException)
+			{
+			}
+		});
+	}
+
+	private async Task LoadPortfolio()
+	{
+		try
+		{
+			var uri = Nav.ToAbsoluteUri(Nav.Uri);
+			var query = QueryHelpers.ParseQuery(uri.Query);
+
+			if (query.ContainsKey("portfolioId"))
+			{
+				UserSessionService.PortfolioId = Convert.ToInt32(query["portfolioId"]);
+			}
+
+			if(UserSessionService.PortfolioId <= 0)
+			{
+				errorMessage = "Portfolio Not Found";
+				return;
+			}
+
+			portfolio = await API.GetPortfolioAsync(UserSessionService.PortfolioId);
+
+			var changes = await API.GetPriceChangesAsync();
+			priceChanges = changes.ToDictionary(c => c.WebsiteId);
+
+			trades = await API.GetTradeHistoryAsync(UserSessionService.PortfolioId);
+		}
+		catch(Exception ex)
+		{
+			errorMessage = ex.Message;
+		}
+		finally
+		{
+			isLoaded = true;
+		}
+	}
+
+	private async Task OpenSellDialog(Website website, decimal sharesOwned)
+	{
+
+		var result = await DialogService.OpenAsync<SellDialogue>("Sell Shares", new Dictionary<string, object>
+		{
+			{ "WebsitePrice", website.Price },
+			{ "MaxShares", sharesOwned }
+		});
+
+		if (result is decimal shares)
+		{
+			await Sell(website.Id, shares);
+			await LoadPortfolio();
+			StateHasChanged();
+		}
+	}
+
+	private async Task Sell(int websiteId, decimal shares)
+	{
+		if (shares <= 0)
+		{
+			return;
+		}
+
+		var request = new TradeRequest
+		{
+			WebsiteId = websiteId,
+			NoShares = shares
+		};
+
+		await API.SellAsync(UserSessionService.PortfolioId, request);
+		UserSessionService.NotifyBalanceChanged();
+	}
+
+	//Navigates to selected website's page
+	private void GoToWebsite(int websiteId)
+	{
+		var url = $"/website/{websiteId}";
+
+		if (UserSessionService.PortfolioId > 0)
+		{
+			url = (url + $"?portfolioId={UserSessionService.PortfolioId}");
+		}
+
+		Nav.NavigateTo(url);
+	}
+
+	private string GetFavicon(string domain)
+	{
+		return $"https://www.google.com/s2/favicons?domain={domain}&sz=64";
+	}
+
+	private decimal GetPriceChange(Website website)
+	{
+		if (priceChanges.ContainsKey(website.Id))
+		{
+			var change = priceChanges[website.Id];
+			return (((change.CurrentPrice - change.PastPrice) / change.PastPrice) * 100);
+		}
+		return 0;
+	}
+
+	private string ChangeColour(Website website)
+	{
+		var change = GetPriceChange(website);
+
+		if (change > 0)
+		{
+			return "green";
+		}
+		else
+		{
+			return "red";
+		}
+	}
+
+	private string PriceChangeSign(decimal price)
+	{
+		decimal roundedPrice = Math.Round(price, 2);
+		if (roundedPrice > 0)
+		{
+			return $"+{roundedPrice:0.00}%";
+		}
+		return $"{roundedPrice:0.00}%"; ;
+	}
+
+	private string UpperCase(string word)
+	{
+		return char.ToUpper(word[0]) + word.Substring(1).ToLower();
+	}
+
+	private string GetTradeColour(string tradeType)
+	{
+		if (tradeType == "BUY")
+		{
+			return "green";
+		}
+		return "red";
+	}
+
+	public void Dispose()
+	{
+		cancellationTokenSource?.Cancel();
+		refreshTimer?.Dispose();
+		cancellationTokenSource?.Dispose();
+	}
+}

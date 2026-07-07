@@ -1,0 +1,233 @@
+﻿@page "/home"
+
+@using Microsoft.AspNetCore.Components.Authorization
+@using DotComTrading.Models
+
+@inject DotComTrading.UI.Services.APIClient API
+@inject DotComTrading.Services.UserSessionService UserSessionService
+
+@*Home Page Displaying Welcome Message, Website Creation Feature, Level Progression and Leaderboard*@
+<h1>@welcomeMessage</h1>
+
+<div class="home-layout">
+	<div class="home-left">
+		<div class="card add-website-card">
+			<div class="card-header">
+				<h4>Add Website To Market</h4>
+			</div>
+			<div class="card-body">
+				<p class="text-muted">Enter URL of Website You Wish to Add.</p>
+				<input class="form-control" placeholder="e.g. www.youtube.com" @bind="websiteUrl" />
+
+				<button class="btn btn-primary w-100 mt-2" @onclick="AddWebsite">Add Website</button>
+				@if (!string.IsNullOrWhiteSpace(message))
+				{
+					<p class="mt-2">@message</p>
+				}
+			</div>
+		</div>
+
+		<div class="level-card">
+			<h4>Investor Level - @level</h4>
+			<p>@xp / @xpNeeded XP To Next Level</p>
+			<div class="xp-bar">
+				<div class="xp-fill" style="width:@xpProgress%" />
+			</div>
+		</div>
+	</div>
+
+	<div class="home-leaderboard">
+		<h4>Leaderboard</h4>
+		<table class="table">
+			<thead>
+				<tr>
+					<th>#</th>
+					<th>User</th>
+					<th>Balance</th>
+				</tr>
+			</thead>
+			<tbody>
+				@foreach(var user in leaderboard)
+				{
+					<tr>
+						<td>@user.Rank</td>
+						<td>@user.Username</td>
+						<td>£@user.Balance.ToString("0.00")</td>
+					</tr>
+				}
+			</tbody>
+		</table>
+	</div>
+</div>
+
+@code {
+	private int level = 1;
+	private int xp = 0;
+	private int xpNeeded = 100;
+	private decimal xpProgress = 0;
+
+	private string welcomeMessage = "";
+	private string websiteUrl = "";
+	private string message = "";
+
+	private List<LeaderboardEntry> leaderboard = new();
+
+	[SupplyParameterFromQuery(Name = "username")]
+	public string? Username { get; set; }
+
+	[SupplyParameterFromQuery(Name = "portfolioId")]
+	public int? PortfolioId { get; set; }
+
+	//Reads user data from query parameters, updates session state and loads page data
+	protected override async Task OnParametersSetAsync()
+	{
+		welcomeMessage = "Welcome To Dot-Com Trading, ";
+
+		string username = "";
+
+		if (!string.IsNullOrWhiteSpace(Username))
+		{
+			username = Username;
+			UserSessionService.Username = Username;
+		}
+		else if (!string.IsNullOrWhiteSpace(UserSessionService.Username))
+		{
+			username = UserSessionService.Username;
+		}
+
+		if (PortfolioId.HasValue)
+		{
+			UserSessionService.PortfolioId = PortfolioId.Value;
+		}
+
+		if (!string.IsNullOrWhiteSpace(username))
+		{
+			if (username.Contains("@"))
+			{
+				username = username.Split('@')[0];
+			}
+
+			username = Char.ToUpper(username[0]) + username.Substring(1);
+
+			welcomeMessage = welcomeMessage + username + "!";
+		}
+
+		await LoadLevel();
+
+		leaderboard = await API.GetLeaderboardAsync();
+	}
+
+	//Sends entered website url to API to be added to market
+	private async Task AddWebsite()
+	{
+		message = "";
+
+		if (string.IsNullOrWhiteSpace(websiteUrl))
+		{
+			message = "Please Enter URL Of Website You Wish to Add.";
+			websiteUrl = "";
+			return;
+		}
+
+		try
+		{
+			var response = await API.CreateWebsiteAsync(websiteUrl);
+
+			if (response.IsSuccessStatusCode)
+			{
+				message = "Website Has Been Added To Market";
+				websiteUrl = "";
+			}
+			else
+			{
+				var body = await response.Content.ReadAsStringAsync();
+				message = body;
+				websiteUrl = "";
+			}
+		}
+		catch(Exception ex)
+		{
+			message = "Error: " + ex.Message;
+		}
+	}
+
+	//Calculates investor level
+	private async Task LoadLevel()
+	{
+		if(UserSessionService.PortfolioId <= 0)
+		{
+			level = 1;
+			xp = 0;
+			xpNeeded = 100;
+			xpProgress = 0;
+			return;
+		}
+		var trades = await API.GetTradeHistoryAsync(UserSessionService.PortfolioId);
+
+		int totalTrades = trades.Count;
+		int totalXp = (totalTrades * 25);
+
+		level = 1;
+		xpNeeded = 100;
+
+		int remainingXp = totalXp;
+
+		while (remainingXp >= xpNeeded)
+		{
+			remainingXp -= xpNeeded;
+			level++;
+
+			xpNeeded += 25;
+		}
+
+		xp = remainingXp;
+		xpProgress = (((decimal)xp / xpNeeded) * 100);
+	}
+}
+
+<style>
+
+	.add-website-card{
+		max-width: 400px;
+		margin-top: 20px;
+		border-radius: 12px;
+	}
+
+	.level-card{
+		max-width: 400px;
+		margin-top: 50px;
+		border-radius: 12px;
+	}
+
+	.xp-bar{
+		width: 100%;
+		height: 18px;
+		background: grey;
+		border-radius: 999px;
+		overflow: hidden;
+		margin-top: 12px;
+	}
+
+	.xp-fill{
+		height: 100%;
+		background: green;
+		border-radius: 999px;
+	}
+
+	.home-layout{
+		display: flex;
+		justify-content: flex-start;
+		gap: 120px;
+		padding: 30px;
+	}
+
+	.home-left{
+		width: 55%;
+	}
+
+	.home-leaderboard{
+		width: 45%;
+		padding: 20px;
+	}
+
+</style>

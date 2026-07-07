@@ -1,0 +1,260 @@
+﻿@using Radzen
+@using Radzen.Blazor
+@using Microsoft.AspNetCore.WebUtilities
+
+@inherits LayoutComponentBase
+
+@inject DotComTrading.UI.Services.APIClient API
+@inject NavigationManager NavManager
+@inject DotComTrading.Services.UserSessionService UserSessionService
+
+@implements IDisposable
+
+@*Main Layout with Backgound Visual, Balance Display and Navigation Menu*@
+<div class="layout">
+    <div class="background">
+        <svg class="market-graph" viewBox="0 0 1200 300" preserveAspectRatio="none">
+            <path d="M0 280
+                L100 260
+                L200 280
+                L300 220
+                L400 200
+                L500 180
+                L600 230
+                L700 170
+                L800 150
+                L900 120
+                L1000 140
+                L1100 100
+                L1200 80">
+            </path>
+        </svg>
+    </div>
+
+    <div class="balance-display">@GetBalanceString()</div>
+
+    <div class="main-content">
+        @Body
+        <div class="navbar">
+            <a href="@GetNavUrl("/portfolio")" class="nav-item">
+                <span class="nav-icon">💼</span>
+                <span class="nav-text">Portfolio</span>
+            </a>
+            <a href="@GetNavUrl("/home")" class="nav-item">
+                <span class="nav-icon">🏠</span>
+                <span class="nav-text">Home</span>
+            </a>
+            <a href="@GetNavUrl("/market")" class="nav-item">
+                <span class="nav-icon">📈</span>
+                <span class="nav-text">Market</span>
+            </a>
+        </div>
+    </div>
+</div>
+
+<RadzenComponents @rendermode="InteractiveServer"/>
+
+@code {
+    private string balanceString = "";
+
+    //Loads current user's portfolio balance
+    private async Task LoadBalance()
+    {
+        try
+        {
+            if (UserSessionService.PortfolioId <= 0)
+            {
+                var uri = NavManager.ToAbsoluteUri(NavManager.Uri);
+                var query = QueryHelpers.ParseQuery(uri.Query);
+
+                if (query.ContainsKey("portfolioId"))
+                {
+                    int portfolioId = Convert.ToInt32(query["portfolioId"]);
+                    UserSessionService.PortfolioId = portfolioId;
+                }
+            }
+
+            if(UserSessionService.PortfolioId <= 0)
+            {
+                balanceString = "Portfolio Not Found";
+                return;
+            }
+
+            var portfolio = await API.GetPortfolioAsync(UserSessionService.PortfolioId);
+            balanceString = portfolio.Balance.ToString("0.00");
+        }
+        catch(Exception ex)
+        {
+            balanceString = ex.Message;
+        }
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        NavManager.LocationChanged += OnLocationChanged;
+        UserSessionService.BalanceChanged += OnBalanceChanged;
+        await LoadBalance();
+    }
+
+    private async void OnLocationChanged(object? sender, Microsoft.AspNetCore.Components.Routing.LocationChangedEventArgs e)
+    {
+        await LoadBalance();
+        await InvokeAsync(StateHasChanged);
+    }
+
+    //reloads balance after a trade
+    private void OnBalanceChanged()
+    {
+        _ = InvokeAsync(async () =>
+        {
+            await LoadBalance();
+            StateHasChanged();
+        });
+    }
+
+    //Creates url ensuring it contains user and portfolio data necessary
+    private string GetNavUrl(string page)
+    {
+        string url = page;
+
+        var queryParts = new List<string>();
+
+        if (UserSessionService.PortfolioId > 0)
+        {
+            queryParts.Add("portfolioId=" + UserSessionService.PortfolioId);
+        }
+
+        if (!string.IsNullOrWhiteSpace(UserSessionService.Username))
+        {
+            queryParts.Add("username=" + Uri.EscapeDataString(UserSessionService.Username));
+        }
+
+        if (queryParts.Count > 0)
+        {
+            url += "?" + string.Join("&", queryParts);
+        }
+
+        return url;
+    }
+
+    private string GetBalanceString()
+    {
+        if(balanceString == "Portfolio Not Found")
+        {
+            return "Portfolio Not found";
+        }
+
+        if (string.IsNullOrWhiteSpace(balanceString))
+        {
+            return "";
+        }
+
+        return $"Balance: £{balanceString}";
+    }
+
+    public void Dispose()
+    {
+        NavManager.LocationChanged -= OnLocationChanged;
+        UserSessionService.BalanceChanged -= OnBalanceChanged;
+    }
+}
+
+<style>
+
+	.navbar{
+		position: fixed;
+		bottom: 20px;
+		width: 100%;
+		height: 90px;
+        padding: 10px;
+        padding-bottom: 20px;
+		display: flex;
+		justify-content: space-around;
+		align-items: center;
+		z-index: 2;
+	}
+
+	.nav-item{
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+        gap: 8px;
+        transition: all 0.2s ease;
+	}
+
+    .nav-icon{
+        font-size: 60px;
+        line-height: 1;
+    }
+
+    .nav-text{
+        font-weight: 600;
+        font-size: 15px;
+    }
+
+    .layout{
+        position: relative;
+        min-height: 100vh;
+    }
+
+	.main-content{
+        position: relative;
+        min-height: 100vh;
+		padding-bottom: 70px;
+        z-index: 1;
+        background: transparent;
+	}
+
+    .background {
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        min-height: 100%;
+        background-image: linear-gradient(rgba(0, 0, 0, 0.03) 1px, transparent 1px), linear-gradient(90deg, rgba(0, 0, 0, 0.03) 1px, transparent 1px);
+        background-size: 40px 40px;
+        background-position: 20px 20px;
+        z-index: 0;
+    }
+
+    .market-graph {
+        position: absolute;
+        width: 100%;
+        height: 100%;
+        bottom: 0;
+        left: 0;
+        pointer-events: none;
+        z-index: 0;
+    }
+
+    .market-graph path {
+        fill: none;
+        stroke: #4f46e5;
+        stroke-width: 3;
+        opacity: 0.05;
+        stroke-dasharray: 1400;
+        stroke-dashoffset: 1400;
+        animation: drawGraph 4.0s ease forwards;
+        z-index: 0;
+    }
+
+    .balance-display{
+        position: fixed;
+        top: 20px;
+        right: 20px;
+        z-index: 2;
+        background: white;
+        padding: 10px;
+        border-radius: 10px;
+        box-shadow: 0 5px 15px rgba(0,0,0,0.1);
+        font-size: 20px;
+        font-weight: 500;
+    }
+
+    @@keyframes drawGraph {
+        to {
+            stroke-dashoffset: 0;
+        }
+    }
+</style>
